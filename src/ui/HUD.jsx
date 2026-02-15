@@ -15,14 +15,6 @@ export default function HUD() {
 
     return (
         <div className="hud-overlay">
-            {/* Crosshair */}
-            <div className="crosshair">
-                <div className="crosshair-dot" />
-                <div className="crosshair-line crosshair-top" />
-                <div className="crosshair-line crosshair-bottom" />
-                <div className="crosshair-line crosshair-left" />
-                <div className="crosshair-line crosshair-right" />
-            </div>
 
             {/* Top bar */}
             <div className="hud-top">

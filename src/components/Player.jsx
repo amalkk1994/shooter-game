@@ -17,6 +17,7 @@ useGLTF.preload(MODEL_PATH);
 export default function Player({ onShoot }) {
     const rigidBodyRef = useRef();
     const meshRef = useRef();
+    const gunRef = useRef();
     const rotationRef = useRef(0);
     const pitchRef = useRef(0);
     const isLockedRef = useRef(false);
@@ -179,6 +180,11 @@ export default function Player({ onShoot }) {
             meshRef.current.rotation.y = yaw;
         }
 
+        // Tilt gun to match camera pitch (aim where crosshair points)
+        if (gunRef.current) {
+            gunRef.current.rotation.x = pitchRef.current;
+        }
+
         const pos = rigidBodyRef.current.translation();
         setPlayerPosition([pos.x, pos.y, pos.z]);
         setPlayerRotation(yaw);
@@ -199,8 +205,8 @@ export default function Player({ onShoot }) {
                 {/* Animated character model */}
                 <primitive object={clonedScene} position={[0, 0, 0]} rotation={[0, Math.PI, 0]} />
 
-                {/* Gun held at right hand level */}
-                <group position={[0.3, 0.7, -0.4]}>
+                {/* Gun held at right hand level — tilts with pitch */}
+                <group ref={gunRef} position={[0.3, 0.7, -0.4]}>
                     {/* Gun body */}
                     <mesh position={[0, 0, -0.35]} castShadow>
                         <boxGeometry args={[0.08, 0.1, 0.5]} />
