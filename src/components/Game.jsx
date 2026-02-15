@@ -9,6 +9,7 @@ import EnemyManager from './Enemy';
 import ProjectileManager from './Projectile';
 import useGameStore from '../store/gameStore';
 import * as THREE from 'three';
+import { playShootSound } from '../utils/sounds';
 
 function PhysicsWorld() {
     const projectilesRef = useRef({ addProjectile: () => { } });
@@ -34,6 +35,7 @@ function PhysicsWorld() {
         dir.normalize();
 
         projectilesRef.current.addProjectile(spawnPos, [dir.x, dir.y, dir.z]);
+        playShootSound();
     }, []);
 
     return (

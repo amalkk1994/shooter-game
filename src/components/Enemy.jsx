@@ -6,6 +6,7 @@ import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.j
 import * as THREE from 'three';
 import useGameStore from '../store/gameStore';
 import { ExplosionEffect } from './Effects';
+import { playExplosionSound } from '../utils/sounds';
 
 const ENEMY_SPEED_BASE = 3;
 const MODEL_PATH = '/models/Xbot.glb';
@@ -242,6 +243,7 @@ export default function EnemyManager() {
                 ...prev,
                 { id: Date.now() + Math.random(), position: pos, color: ENEMY_COLORS[colorIdx].color, time: Date.now() },
             ]);
+            playExplosionSound();
         }
         setEnemies((prev) => prev.filter((e) => e.id !== id));
         useGameStore.getState().enemyKilled();
