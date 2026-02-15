@@ -1,17 +1,25 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { useGLTF, useAnimations } from '@react-three/drei';
 import { RigidBody, CapsuleCollider } from '@react-three/rapier';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import * as THREE from 'three';
 import useGameStore from '../store/gameStore';
+import { ExplosionEffect } from './Effects';
 
 const ENEMY_SPEED_BASE = 3;
+const MODEL_PATH = '/models/Xbot.glb';
+
 const ENEMY_COLORS = [
-    { body: '#ff0044', emissive: '#ff0044' },
-    { body: '#ff6600', emissive: '#ff6600' },
-    { body: '#aa00ff', emissive: '#aa00ff' },
-    { body: '#00ff88', emissive: '#00ff88' },
-    { body: '#ffff00', emissive: '#ffff00' },
+    { color: '#ff0044', name: 'red' },
+    { color: '#ff6600', name: 'orange' },
+    { color: '#aa00ff', name: 'purple' },
+    { color: '#00ff88', name: 'green' },
+    { color: '#ffff00', name: 'yellow' },
 ];
+
+// Preload
+useGLTF.preload(MODEL_PATH);
 
 // Global enemy registry for projectile collision checking
 const enemyRegistry = new Map();
@@ -28,11 +36,43 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
     const [alive, setAlive] = useState(true);
     const [flashTime, setFlashTime] = useState(0);
     const colorIdx = Math.floor(Math.abs(id * 13)) % ENEMY_COLORS.length;
-    const color = ENEMY_COLORS[colorIdx];
+    const enemyColor = ENEMY_COLORS[colorIdx];
     const speedMultiplier = 1 + (wave - 1) * 0.15;
     const attackCooldownRef = useRef(0);
 
-    // Register this enemy in the global registry for collision checks
+    // Load and clone model with unique color
+    const { scene, animations } = useGLTF(MODEL_PATH);
+    const clonedScene = useMemo(() => {
+        const clone = cloneSkeleton(scene);
+        clone.traverse((child) => {
+            if (child.isMesh || child.isSkinnedMesh) {
+                child.castShadow = true;
+                if (child.material) {
+                    child.material = child.material.clone();
+                    child.material.emissive = new THREE.Color(enemyColor.color);
+                    child.material.emissiveIntensity = 0.6;
+                }
+            }
+        });
+        clone.scale.set(1, 1, 1);
+        return clone;
+    }, [scene, enemyColor.color]);
+
+    const { actions, mixer } = useAnimations(animations, clonedScene);
+
+    // Start with run animation by default (enemies are always chasing)
+    useEffect(() => {
+        const actionNames = Object.keys(actions);
+        const runAction = actions['run'] || actions[actionNames.find(n => n.toLowerCase().includes('run'))] || actions[actionNames[actionNames.length - 1]];
+        if (runAction) {
+            runAction.reset().fadeIn(0.2).play();
+        }
+        return () => {
+            Object.values(actions).forEach((a) => a?.stop());
+        };
+    }, [actions]);
+
+    // Register in global registry
     useEffect(() => {
         const entry = {
             getPosition: () => {
@@ -63,6 +103,9 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
     useFrame((_, delta) => {
         if (!aliveRef.current || !rigidBodyRef.current) return;
 
+        // Update animation mixer
+        mixer?.update(delta);
+
         const playerPos = useGameStore.getState().playerPosition;
         const pos = rigidBodyRef.current.translation();
         const dir = new THREE.Vector3(
@@ -74,7 +117,6 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
         const dist = dir.length();
         dir.normalize();
 
-        // Move toward player
         const speed = ENEMY_SPEED_BASE * speedMultiplier;
         if (dist > 1.5) {
             rigidBodyRef.current.setLinvel({
@@ -89,7 +131,6 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
                 z: 0,
             }, true);
 
-            // Attack player
             attackCooldownRef.current -= delta;
             if (attackCooldownRef.current <= 0) {
                 onHitPlayer(10 + wave * 2);
@@ -97,7 +138,6 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
             }
         }
 
-        // Flash effect
         if (flashTime > 0) {
             setFlashTime((t) => Math.max(0, t - delta));
         }
@@ -106,16 +146,9 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
         if (meshRef.current) {
             meshRef.current.rotation.y = Math.atan2(dir.x, dir.z);
         }
-
-        // Floating animation
-        if (meshRef.current) {
-            meshRef.current.position.y = Math.sin(Date.now() * 0.003 + id) * 0.15;
-        }
     });
 
     if (!alive) return null;
-
-    const isFlashing = flashTime > 0;
 
     return (
         <RigidBody
@@ -126,42 +159,14 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
             mass={1}
             linearDamping={3}
         >
-            <CapsuleCollider args={[0.4, 0.4]} position={[0, 0.8, 0]} />
+            <CapsuleCollider args={[0.4, 0.3]} position={[0, 0.7, 0]} />
             <group ref={meshRef}>
-                {/* Body */}
-                <mesh position={[0, 0.8, 0]} castShadow>
-                    <dodecahedronGeometry args={[0.5, 0]} />
-                    <meshStandardMaterial
-                        color={isFlashing ? '#ffffff' : color.body}
-                        emissive={isFlashing ? '#ffffff' : color.emissive}
-                        emissiveIntensity={isFlashing ? 3 : 1}
-                        metalness={0.5}
-                        roughness={0.3}
-                    />
-                </mesh>
-                {/* Eye */}
-                <mesh position={[0, 0.9, -0.4]}>
-                    <sphereGeometry args={[0.12, 8, 8]} />
-                    <meshStandardMaterial
-                        color="#ffffff"
-                        emissive="#ffffff"
-                        emissiveIntensity={2}
-                    />
-                </mesh>
-                {/* Inner eye */}
-                <mesh position={[0, 0.9, -0.48]}>
-                    <sphereGeometry args={[0.06, 8, 8]} />
-                    <meshStandardMaterial
-                        color="#000000"
-                        emissive={color.emissive}
-                        emissiveIntensity={1}
-                    />
-                </mesh>
-                {/* Glow */}
+                <primitive object={clonedScene} position={[0, 0, 0]} />
+                {/* Glow light matching the enemy's color */}
                 <pointLight
                     position={[0, 1, 0]}
-                    color={color.emissive}
-                    intensity={2}
+                    color={enemyColor.color}
+                    intensity={flashTime > 0 ? 8 : 2}
                     distance={5}
                 />
             </group>
@@ -171,6 +176,7 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
 
 export default function EnemyManager() {
     const [enemies, setEnemies] = useState([]);
+    const [explosions, setExplosions] = useState([]);
     const wave = useGameStore((s) => s.wave);
     const gameState = useGameStore((s) => s.gameState);
     const totalEnemiesInWave = useGameStore((s) => s.totalEnemiesInWave);
@@ -178,7 +184,6 @@ export default function EnemyManager() {
     const spawnTimerRef = useRef(0);
     const lastWaveRef = useRef(0);
 
-    // Reset on new wave
     useEffect(() => {
         if (wave !== lastWaveRef.current && gameState === 'playing') {
             lastWaveRef.current = wave;
@@ -187,18 +192,22 @@ export default function EnemyManager() {
         }
     }, [wave, gameState]);
 
-    // Reset on game start
     useEffect(() => {
         if (gameState === 'playing') {
             lastWaveRef.current = wave;
             spawnedRef.current = 0;
             setEnemies([]);
+            setExplosions([]);
             enemyRegistry.clear();
         }
     }, [gameState]);
 
+    // Auto-clean explosions after 1 second
     useFrame((_, delta) => {
         if (gameState !== 'playing') return;
+
+        // Clean old explosions
+        setExplosions((prev) => prev.filter((e) => Date.now() - e.time < 1000));
 
         const total = totalEnemiesInWave;
         if (spawnedRef.current >= total) return;
@@ -207,7 +216,6 @@ export default function EnemyManager() {
         if (spawnTimerRef.current <= 0) {
             spawnTimerRef.current = Math.max(0.5, 2.0 - wave * 0.1);
 
-            // Spawn at random arena edge
             const side = Math.floor(Math.random() * 4);
             const offset = (Math.random() - 0.5) * 40;
             let pos;
@@ -225,6 +233,16 @@ export default function EnemyManager() {
     });
 
     const handleDeath = useCallback((id) => {
+        // Get the enemy's last position for the explosion
+        const registry = enemyRegistry.get(id);
+        if (registry) {
+            const pos = registry.getPosition();
+            const colorIdx = Math.floor(Math.abs(id * 13)) % ENEMY_COLORS.length;
+            setExplosions((prev) => [
+                ...prev,
+                { id: Date.now() + Math.random(), position: pos, color: ENEMY_COLORS[colorIdx].color, time: Date.now() },
+            ]);
+        }
         setEnemies((prev) => prev.filter((e) => e.id !== id));
         useGameStore.getState().enemyKilled();
     }, []);
@@ -245,6 +263,14 @@ export default function EnemyManager() {
                     onHitPlayer={handleHitPlayer}
                 />
             ))}
+            {explosions.map((exp) => (
+                <ExplosionEffect
+                    key={exp.id}
+                    position={exp.position}
+                    color={exp.color}
+                />
+            ))}
         </group>
     );
 }
+

@@ -17,8 +17,8 @@ function PhysicsWorld() {
         const playerPos = useGameStore.getState().playerPosition;
 
         // Calculate projectile spawn position (at gun muzzle)
-        // Matches Player model: arm group at (0.35, 0.65, -0.2), muzzle at (0, -0.05, -0.9) inside group
-        const gunOffset = new THREE.Vector3(0.35, 0.6, -1.1);
+        // Matches Player model: gun group at (0.3, 0.7, -0.4), muzzle at (0, 0, -0.65) inside group
+        const gunOffset = new THREE.Vector3(0.3, 0.7, -1.05);
         gunOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotation);
 
         const spawnPos = [

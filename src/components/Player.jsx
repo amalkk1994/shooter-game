@@ -1,19 +1,26 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
+import { useGLTF, useAnimations } from '@react-three/drei';
 import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 import * as THREE from 'three';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import useGameStore from '../store/gameStore';
 
 const MOVE_SPEED = 8;
 const MOUSE_SENSITIVITY = 0.003;
+const MODEL_PATH = '/models/Xbot.glb';
 const keys = {};
+
+// Preload the model
+useGLTF.preload(MODEL_PATH);
 
 export default function Player({ onShoot }) {
     const rigidBodyRef = useRef();
     const meshRef = useRef();
-    const rotationRef = useRef(0); // yaw (horizontal)
-    const pitchRef = useRef(0);   // pitch (vertical)
+    const rotationRef = useRef(0);
+    const pitchRef = useRef(0);
     const isLockedRef = useRef(false);
+    const isMovingRef = useRef(false);
     const { gl } = useThree();
 
     const gameState = useGameStore((s) => s.gameState);
@@ -21,6 +28,59 @@ export default function Player({ onShoot }) {
     const setPlayerPosition = useGameStore((s) => s.setPlayerPosition);
     const setPlayerRotation = useGameStore((s) => s.setPlayerRotation);
     const setPlayerPitch = useGameStore((s) => s.setPlayerPitch);
+
+    // Load model and clone it for the player
+    const { scene, animations } = useGLTF(MODEL_PATH);
+    const clonedScene = useMemo(() => {
+        const clone = cloneSkeleton(scene);
+        clone.traverse((child) => {
+            if (child.isMesh || child.isSkinnedMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                // Give the player a distinct blue tint
+                if (child.material) {
+                    child.material = child.material.clone();
+                    child.material.emissive = new THREE.Color('#0044ff');
+                    child.material.emissiveIntensity = 0.3;
+                }
+            }
+        });
+        clone.scale.set(1, 1, 1);
+        return clone;
+    }, [scene]);
+
+    const { actions, mixer } = useAnimations(animations, clonedScene);
+
+    // Start idle animation
+    useEffect(() => {
+        const actionNames = Object.keys(actions);
+        // Find idle-like animation (usually first or named 'idle')
+        const idleAction = actions['idle'] || actions[actionNames[0]];
+        if (idleAction) {
+            idleAction.reset().fadeIn(0.2).play();
+        }
+        return () => {
+            Object.values(actions).forEach((a) => a?.stop());
+        };
+    }, [actions]);
+
+    // Handle animation transitions based on movement
+    const currentActionRef = useRef(null);
+    const switchAnimation = (name) => {
+        const actionNames = Object.keys(actions);
+        const targetName = actionNames.find((n) => n.toLowerCase().includes(name.toLowerCase()));
+        if (!targetName || currentActionRef.current === targetName) return;
+
+        const current = currentActionRef.current ? actions[currentActionRef.current] : null;
+        const next = actions[targetName];
+        if (!next) return;
+
+        if (current) {
+            current.fadeOut(0.2);
+        }
+        next.reset().fadeIn(0.2).play();
+        currentActionRef.current = targetName;
+    };
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -33,11 +93,9 @@ export default function Player({ onShoot }) {
 
         const handleMouseMove = (e) => {
             if (!isLockedRef.current) return;
-            // Yaw: horizontal mouse movement rotates around Y axis
             rotationRef.current -= e.movementX * MOUSE_SENSITIVITY;
-            // Pitch: vertical mouse movement tilts camera up/down
             pitchRef.current = Math.max(
-                -Math.PI / 3,  // can look further up
+                -Math.PI / 3,
                 Math.min(Math.PI / 6, pitchRef.current - e.movementY * MOUSE_SENSITIVITY)
             );
         };
@@ -72,13 +130,14 @@ export default function Player({ onShoot }) {
         };
     }, [gl, gameState, shoot, onShoot, setPlayerPitch]);
 
-    useFrame(() => {
+    useFrame((_, delta) => {
         if (!rigidBodyRef.current || gameState !== 'playing') return;
+
+        // Update animation mixer
+        mixer?.update(delta);
 
         const yaw = rotationRef.current;
 
-        // Build input direction in local space
-        // W = forward (-Z), S = backward (+Z), A = left (-X), D = right (+X)
         let inputX = 0;
         let inputZ = 0;
         if (keys['KeyW'] || keys['ArrowUp']) inputZ = -1;
@@ -86,15 +145,23 @@ export default function Player({ onShoot }) {
         if (keys['KeyA'] || keys['ArrowLeft']) inputX = -1;
         if (keys['KeyD'] || keys['ArrowRight']) inputX = 1;
 
-        // Normalize diagonal movement
         const len = Math.sqrt(inputX * inputX + inputZ * inputZ);
         if (len > 0) {
             inputX /= len;
             inputZ /= len;
         }
 
-        // Rotate input by yaw to convert from local space to world space
-        // Forward in local space (-Z) should map to the direction the camera is facing
+        const isMoving = len > 0;
+
+        // Switch animations
+        if (isMoving && !isMovingRef.current) {
+            switchAnimation('run');
+        } else if (!isMoving && isMovingRef.current) {
+            switchAnimation('idle');
+        }
+        isMovingRef.current = isMoving;
+
+        // Rotate input by yaw
         const sinYaw = Math.sin(yaw);
         const cosYaw = Math.cos(yaw);
         const worldX = inputX * cosYaw + inputZ * sinYaw;
@@ -112,7 +179,6 @@ export default function Player({ onShoot }) {
             meshRef.current.rotation.y = yaw;
         }
 
-        // Update store with position, rotation, and pitch
         const pos = rigidBodyRef.current.translation();
         setPlayerPosition([pos.x, pos.y, pos.z]);
         setPlayerRotation(yaw);
@@ -128,38 +194,16 @@ export default function Player({ onShoot }) {
             mass={1}
             linearDamping={5}
         >
-            <CapsuleCollider args={[0.5, 0.4]} position={[0, 0.9, 0]} />
+            <CapsuleCollider args={[0.5, 0.3]} position={[0, 0.8, 0]} />
             <group ref={meshRef}>
-                {/* Body */}
-                <mesh position={[0, 1, 0]} castShadow>
-                    <capsuleGeometry args={[0.35, 0.8, 8, 16]} />
-                    <meshStandardMaterial
-                        color="#1a1a3a"
-                        emissive="#00aaff"
-                        emissiveIntensity={0.3}
-                        metalness={0.8}
-                        roughness={0.2}
-                    />
-                </mesh>
-                {/* Head / Visor */}
-                <mesh position={[0, 1.5, -0.2]} castShadow>
-                    <boxGeometry args={[0.35, 0.1, 0.12]} />
-                    <meshStandardMaterial
-                        color="#00ffff"
-                        emissive="#00ffff"
-                        emissiveIntensity={2}
-                    />
-                </mesh>
-                {/* Right arm holding gun — extended forward */}
-                <group position={[0.35, 0.65, -0.2]}>
-                    {/* Upper arm */}
-                    <mesh castShadow>
-                        <boxGeometry args={[0.1, 0.25, 0.15]} />
-                        <meshStandardMaterial color="#1a1a3a" emissive="#00aaff" emissiveIntensity={0.2} />
-                    </mesh>
+                {/* Animated character model */}
+                <primitive object={clonedScene} position={[0, 0, 0]} rotation={[0, Math.PI, 0]} />
+
+                {/* Gun held at right hand level */}
+                <group position={[0.3, 0.7, -0.4]}>
                     {/* Gun body */}
-                    <mesh position={[0, -0.05, -0.55]} castShadow>
-                        <boxGeometry args={[0.1, 0.12, 0.7]} />
+                    <mesh position={[0, 0, -0.35]} castShadow>
+                        <boxGeometry args={[0.08, 0.1, 0.5]} />
                         <meshStandardMaterial
                             color="#2a2a4a"
                             emissive="#ff4400"
@@ -168,48 +212,26 @@ export default function Player({ onShoot }) {
                             roughness={0.1}
                         />
                     </mesh>
-                    {/* Gun grip */}
-                    <mesh position={[0, -0.15, -0.3]} castShadow>
-                        <boxGeometry args={[0.08, 0.15, 0.08]} />
-                        <meshStandardMaterial color="#1a1a2e" metalness={0.8} roughness={0.2} />
+                    {/* Muzzle */}
+                    <mesh position={[0, 0, -0.65]}>
+                        <sphereGeometry args={[0.04, 8, 8]} />
+                        <meshStandardMaterial color="#ff4400" emissive="#ff4400" emissiveIntensity={3} />
                     </mesh>
-                    {/* Muzzle tip */}
-                    <mesh position={[0, -0.05, -0.9]}>
-                        <sphereGeometry args={[0.05, 8, 8]} />
-                        <meshStandardMaterial
-                            color="#ff4400"
-                            emissive="#ff4400"
-                            emissiveIntensity={3}
-                        />
-                    </mesh>
-                    {/* Laser sight — a thin line extending far from the muzzle */}
-                    <mesh position={[0, -0.05, -4.5]} rotation={[Math.PI / 2, 0, 0]}>
-                        <cylinderGeometry args={[0.005, 0.005, 7, 4]} />
+                    {/* Laser sight */}
+                    <mesh position={[0, 0, -4]} rotation={[Math.PI / 2, 0, 0]}>
+                        <cylinderGeometry args={[0.004, 0.004, 6, 4]} />
                         <meshStandardMaterial
                             color="#ff0000"
                             emissive="#ff0000"
                             emissiveIntensity={5}
                             transparent
-                            opacity={0.4}
+                            opacity={0.35}
                         />
                     </mesh>
                 </group>
-                {/* Left arm */}
-                <mesh position={[-0.35, 0.65, 0]} castShadow>
-                    <boxGeometry args={[0.1, 0.3, 0.1]} />
-                    <meshStandardMaterial color="#1a1a3a" emissive="#00aaff" emissiveIntensity={0.2} />
-                </mesh>
-                {/* Shoulder pads */}
-                <mesh position={[0.4, 1.15, 0]} castShadow>
-                    <sphereGeometry args={[0.13, 8, 8]} />
-                    <meshStandardMaterial color="#1a1a3a" emissive="#6600ff" emissiveIntensity={0.5} />
-                </mesh>
-                <mesh position={[-0.4, 1.15, 0]} castShadow>
-                    <sphereGeometry args={[0.13, 8, 8]} />
-                    <meshStandardMaterial color="#1a1a3a" emissive="#6600ff" emissiveIntensity={0.5} />
-                </mesh>
-                {/* Player light */}
-                <pointLight position={[0, 1.5, 0]} color="#00aaff" intensity={3} distance={8} />
+
+                {/* Player glow */}
+                <pointLight position={[0, 1.2, 0]} color="#00aaff" intensity={3} distance={8} />
             </group>
         </RigidBody>
     );
