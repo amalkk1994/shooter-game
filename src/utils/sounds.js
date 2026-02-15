@@ -64,6 +64,58 @@ export function playShootSound() {
     }
 }
 
+export function playHitSound() {
+    try {
+        const ctx = getAudioContext();
+        const now = ctx.currentTime;
+
+        // Mid-frequency impact thud
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.08);
+
+        const oscGain = ctx.createGain();
+        oscGain.gain.setValueAtTime(0.25, now);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+
+        // Short noise burst for impact texture
+        const bufferSize = ctx.sampleRate * 0.06;
+        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const noiseData = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            noiseData[i] = (Math.random() * 2 - 1) * 0.5;
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = noiseBuffer;
+
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.2, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+
+        // Band-pass filter for a focused impact feel
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 800;
+        filter.Q.value = 1.5;
+
+        // Connect
+        osc.connect(oscGain);
+        oscGain.connect(ctx.destination);
+
+        noise.connect(filter);
+        filter.connect(noiseGain);
+        noiseGain.connect(ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.12);
+        noise.start(now);
+        noise.stop(now + 0.06);
+    } catch (e) {
+        // Audio not available, silently fail
+    }
+}
+
 export function playExplosionSound() {
     try {
         const ctx = getAudioContext();

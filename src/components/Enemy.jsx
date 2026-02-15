@@ -6,7 +6,7 @@ import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.j
 import * as THREE from 'three';
 import useGameStore from '../store/gameStore';
 import { ExplosionEffect } from './Effects';
-import { playExplosionSound } from '../utils/sounds';
+import { playExplosionSound, playHitSound } from '../utils/sounds';
 
 const ENEMY_SPEED_BASE = 3;
 const MODEL_PATH = '/models/Xbot.glb';
@@ -86,7 +86,8 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
             takeDamage: (dmg) => {
                 if (!aliveRef.current) return;
                 healthRef.current -= dmg;
-                setFlashTime(0.15);
+                setFlashTime(0.2);
+                playHitSound();
                 if (healthRef.current <= 0) {
                     aliveRef.current = false;
                     setAlive(false);
@@ -141,6 +142,12 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
 
         if (flashTime > 0) {
             setFlashTime((t) => Math.max(0, t - delta));
+            // Blink effect: toggle visibility rapidly (~15Hz)
+            if (meshRef.current) {
+                meshRef.current.visible = Math.sin(flashTime * 45) > 0;
+            }
+        } else if (meshRef.current && !meshRef.current.visible) {
+            meshRef.current.visible = true;
         }
 
         // Rotate to face player
