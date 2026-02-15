@@ -19,6 +19,22 @@ const ENEMY_COLORS = [
     { color: '#ffff00', name: 'yellow' },
 ];
 
+// Enemy variant definitions
+const ENEMY_VARIANTS = {
+    normal: { scale: 1.0, healthMult: 1.0, speedMult: 1.0, colliderH: 0.4, colliderR: 0.3, jumps: false },
+    tank: { scale: 1.6, healthMult: 3.0, speedMult: 0.7, colliderH: 0.6, colliderR: 0.5, jumps: false },
+    speeder: { scale: 0.85, healthMult: 0.6, speedMult: 2.2, colliderH: 0.35, colliderR: 0.25, jumps: false },
+    jumper: { scale: 1.0, healthMult: 1.0, speedMult: 1.1, colliderH: 0.4, colliderR: 0.3, jumps: true },
+};
+
+function pickVariant() {
+    const roll = Math.random();
+    if (roll < 0.20) return 'tank';
+    if (roll < 0.35) return 'speeder';
+    if (roll < 0.50) return 'jumper';
+    return 'normal';
+}
+
 // Preload
 useGLTF.preload(MODEL_PATH);
 
@@ -29,17 +45,19 @@ export function getEnemyRegistry() {
     return enemyRegistry;
 }
 
-function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
+function SingleEnemy({ id, position, wave, variant = 'normal', onDeath, onHitPlayer }) {
     const rigidBodyRef = useRef();
     const meshRef = useRef();
-    const healthRef = useRef(50 + wave * 10);
+    const vDef = ENEMY_VARIANTS[variant] || ENEMY_VARIANTS.normal;
+    const healthRef = useRef((50 + wave * 10) * vDef.healthMult);
     const aliveRef = useRef(true);
     const [alive, setAlive] = useState(true);
     const [flashTime, setFlashTime] = useState(0);
     const colorIdx = Math.floor(Math.abs(id * 13)) % ENEMY_COLORS.length;
     const enemyColor = ENEMY_COLORS[colorIdx];
-    const speedMultiplier = 1 + (wave - 1) * 0.15;
+    const speedMultiplier = (1 + (wave - 1) * 0.15) * vDef.speedMult;
     const attackCooldownRef = useRef(0);
+    const jumpTimerRef = useRef(Math.random() * 1.5); // stagger initial jump timing
 
     // Load and clone model with unique color
     const { scene, animations } = useGLTF(MODEL_PATH);
@@ -55,7 +73,7 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
                 }
             }
         });
-        clone.scale.set(1, 1, 1);
+        clone.scale.set(vDef.scale, vDef.scale, vDef.scale);
         return clone;
     }, [scene, enemyColor.color]);
 
@@ -120,16 +138,27 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
         dir.normalize();
 
         const speed = ENEMY_SPEED_BASE * speedMultiplier;
+        let currentYVel = rigidBodyRef.current.linvel().y;
+
+        // Jumper variant: periodic leaps while chasing
+        if (vDef.jumps && dist > 1.5) {
+            jumpTimerRef.current -= delta;
+            if (jumpTimerRef.current <= 0) {
+                currentYVel = 6 + Math.random() * 3; // impulse upward
+                jumpTimerRef.current = 1.0 + Math.random() * 1.5; // random interval
+            }
+        }
+
         if (dist > 1.5) {
             rigidBodyRef.current.setLinvel({
                 x: dir.x * speed,
-                y: rigidBodyRef.current.linvel().y,
+                y: currentYVel,
                 z: dir.z * speed,
             }, true);
         } else {
             rigidBodyRef.current.setLinvel({
                 x: 0,
-                y: rigidBodyRef.current.linvel().y,
+                y: currentYVel,
                 z: 0,
             }, true);
 
@@ -167,7 +196,7 @@ function SingleEnemy({ id, position, wave, onDeath, onHitPlayer }) {
             mass={1}
             linearDamping={3}
         >
-            <CapsuleCollider args={[0.4, 0.3]} position={[0, 0.7, 0]} />
+            <CapsuleCollider args={[vDef.colliderH, vDef.colliderR]} position={[0, 0.7 * vDef.scale, 0]} />
             <group ref={meshRef}>
                 <primitive object={clonedScene} position={[0, 0, 0]} />
                 {/* Glow light matching the enemy's color */}
@@ -235,7 +264,8 @@ export default function EnemyManager() {
             }
 
             const id = spawnedRef.current + wave * 1000 + Math.random();
-            setEnemies((prev) => [...prev, { id, position: pos }]);
+            const variant = pickVariant();
+            setEnemies((prev) => [...prev, { id, position: pos, variant }]);
             spawnedRef.current += 1;
         }
     });
@@ -268,6 +298,7 @@ export default function EnemyManager() {
                     id={enemy.id}
                     position={enemy.position}
                     wave={wave}
+                    variant={enemy.variant}
                     onDeath={handleDeath}
                     onHitPlayer={handleHitPlayer}
                 />
